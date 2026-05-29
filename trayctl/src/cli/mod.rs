@@ -1,6 +1,9 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::error::CtlError;
+use crate::ipc::IpcClient;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -9,38 +12,56 @@ use crate::error::CtlError;
     about = "Tray menu orchestrator (IPC + dmenu)"
 )]
 pub struct Cli {
+    /// Unix socket path (default: `$XDG_RUNTIME_DIR/trayd.sock`).
+    #[arg(long, global = true)]
+    pub socket: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
-    /// Run the dmenu submenu loop for one tray app (Phase 3).
+    /// Run the dmenu submenu loop for one tray app.
     Menu {
         /// StatusNotifier app id (wire `app_id`).
         #[arg(long)]
         app_id: String,
-        /// dmenu-compatible command, e.g. `tofi --mode dmenu`.
+        /// dmenu-compatible command, e.g. `tofi --mode dmenu` or `rofi -dmenu`.
         #[arg(long, default_value = "tofi --mode dmenu")]
         dmenu_cmd: String,
     },
-    /// Print tray items (`get_items`) for scripts (Phase 3).
+    /// Print tray items (`get_items`) as JSON — useful for scripts.
     Items,
 }
 
 impl Cli {
-    pub fn run_stub(self) -> Result<(), CtlError> {
+    pub async fn run(self) -> Result<(), CtlError> {
+        let socket_path = self.socket.map_or_else(default_socket_path, Ok)?;
+
+        let mut client = IpcClient::connect(&socket_path).await?;
+
         match self.command {
             Command::Menu { app_id, dmenu_cmd } => {
-                tracing::info!(%app_id, %dmenu_cmd, "trayctl menu stub (Phase 3)");
-                let _ = crate::dmenu::stub_run();
+                tracing::debug!(%app_id, %dmenu_cmd, "trayctl menu");
+                crate::dmenu::run_submenu_loop(&mut client, &app_id, &dmenu_cmd).await
             }
             Command::Items => {
-                tracing::info!("trayctl items stub (Phase 3)");
+                tracing::debug!("trayctl items");
+                let items = client.get_items().await?;
+                let json = serde_json::to_string_pretty(&items).map_err(CtlError::Json)?;
+                println!("{json}");
+                Ok(())
             }
         }
-        Ok(())
     }
+}
+
+/// Resolve the default socket path from `$XDG_RUNTIME_DIR/trayd.sock`.
+fn default_socket_path() -> Result<PathBuf, CtlError> {
+    let dir = std::env::var("XDG_RUNTIME_DIR")
+        .map_err(|_| CtlError::DaemonUnreachable("XDG_RUNTIME_DIR not set".to_owned()))?;
+    Ok(PathBuf::from(dir).join("trayd.sock"))
 }
 
 #[cfg(test)]

@@ -362,8 +362,8 @@ When a phase is marked complete:
 ### Phase 3 — DBusMenu + **trayctl**
 
 - [x] Menu snapshots on `TrayHost`; `get_menu` / `activate` on wire.
-- [ ] **trayctl** submenu loop (§3.3) with `tofi --mode dmenu` dogfood.
-- [ ] No `trayd` subprocess APIs.
+- [x] **trayctl** submenu loop (§3.3) with `tofi --mode dmenu` dogfood.
+- [x] No `trayd` subprocess APIs.
 
 **Verify:** nested menu via trayctl + tofi; scripted tests with recorded menu fixtures.
 
