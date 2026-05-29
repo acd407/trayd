@@ -32,7 +32,7 @@ fn find_selected_missing_returns_none() {
 /// which causes it to exit without calling dmenu.
 #[test]
 fn run_submenu_loop_empty_labels_filtered() {
-    let items = vec![
+    let items = [
         make_item(1, "", false),
         make_item(2, "", true),
         make_item(3, "", false),
