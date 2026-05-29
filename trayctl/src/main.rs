@@ -9,10 +9,11 @@ use std::process::ExitCode;
 use clap::Parser;
 use cli::Cli;
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     logger::init();
 
-    match Cli::parse().run_stub() {
+    match Cli::parse().run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!(%err, "trayctl failed");

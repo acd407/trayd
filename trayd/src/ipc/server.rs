@@ -8,7 +8,9 @@ use libtrayd::{ItemId, TrayHost, TraydError};
 
 use crate::error::TraydBinError;
 use crate::ipc::codec;
-use crate::ipc::protocol::{Cmd, ErrorCode, IpcResponse, MinimalTrayItem, OkPayload, TrayEvent};
+use crate::ipc::protocol::{
+    Cmd, ErrorCode, IpcResponse, MenuItem, MinimalTrayItem, OkPayload, TrayEvent,
+};
 
 pub struct IpcServer {
     pub socket_path: PathBuf,
@@ -71,8 +73,26 @@ async fn dispatch<W: AsyncWriteExt + Unpin>(write: &mut W, host: &TrayHost, cmd:
             codec::write_response(write, &resp).await.is_ok()
         }
 
-        Cmd::GetMenu { .. } => {
-            let resp = IpcResponse::err(ErrorCode::NotImplemented, "GetMenu is Phase 3");
+        Cmd::GetMenu { app_id, submenu_id } => {
+            let id = ItemId::from(app_id.clone());
+            let resp = match host.get_menu(&id, submenu_id).await {
+                Ok(nodes) => {
+                    let items = nodes
+                        .into_iter()
+                        .filter(|n| n.visible)
+                        .map(|n| MenuItem {
+                            item_id: n.id as u32,
+                            label: n.label,
+                            is_submenu: n.is_submenu,
+                        })
+                        .collect();
+                    IpcResponse::ok(OkPayload::Menu { app_id, items })
+                }
+                Err(TraydError::NotFound(_)) => {
+                    IpcResponse::err(ErrorCode::NotFound, format!("{app_id} not found"))
+                }
+                Err(e) => IpcResponse::err(ErrorCode::BusFailed, e.to_string()),
+            };
             codec::write_response(write, &resp).await.is_ok()
         }
 
@@ -82,9 +102,6 @@ async fn dispatch<W: AsyncWriteExt + Unpin>(write: &mut W, host: &TrayHost, cmd:
                 Ok(()) => IpcResponse::ok(OkPayload::Ack),
                 Err(TraydError::NotFound(_)) => {
                     IpcResponse::err(ErrorCode::NotFound, format!("{app_id} not found"))
-                }
-                Err(TraydError::NotImplemented) => {
-                    IpcResponse::err(ErrorCode::NotImplemented, "menu items are Phase 3")
                 }
                 Err(e) => IpcResponse::err(ErrorCode::BusFailed, e.to_string()),
             };

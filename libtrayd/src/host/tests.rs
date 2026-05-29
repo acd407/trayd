@@ -55,3 +55,62 @@ async fn live_tray_host_start() {
     let items = host.items().await;
     println!("registered items: {items:?}");
 }
+
+// ─── menu_nodes_from_av / prop helpers ───────────────────────────────────────
+
+#[test]
+fn menu_nodes_from_av_empty_slice() {
+    let nodes = menu_nodes_from_av(vec![]);
+    assert!(nodes.is_empty());
+}
+
+#[test]
+fn get_str_prop_missing_key_returns_empty() {
+    let props: std::collections::HashMap<String, zbus::zvariant::OwnedValue> = Default::default();
+    assert_eq!(get_str_prop(&props, "label"), "");
+}
+
+#[test]
+fn get_str_prop_with_string_value() {
+    use zbus::zvariant::{OwnedValue, Value};
+    let mut props: std::collections::HashMap<String, OwnedValue> = Default::default();
+    let ov: OwnedValue = Value::from("Hello")
+        .try_into()
+        .expect("OwnedValue from str");
+    props.insert("label".to_owned(), ov);
+    assert_eq!(get_str_prop(&props, "label"), "Hello");
+}
+
+#[test]
+fn get_bool_prop_missing_key_returns_none() {
+    let props: std::collections::HashMap<String, zbus::zvariant::OwnedValue> = Default::default();
+    assert_eq!(get_bool_prop(&props, "enabled"), None);
+}
+
+#[test]
+fn get_bool_prop_with_true() {
+    use zbus::zvariant::{OwnedValue, Value};
+    let mut props: std::collections::HashMap<String, OwnedValue> = Default::default();
+    let ov: OwnedValue = Value::from(true).try_into().expect("OwnedValue from bool");
+    props.insert("enabled".to_owned(), ov);
+    assert_eq!(get_bool_prop(&props, "enabled"), Some(true));
+}
+
+/// Live D-Bus test for get_menu — skipped in CI.
+#[tokio::test]
+#[ignore = "requires D-Bus session bus with a registered tray item that has a menu"]
+async fn live_get_menu_top_level() {
+    let host = TrayHost::start().await.expect("TrayHost::start failed");
+    let items = host.items().await;
+    let item = items
+        .iter()
+        .find(|i| !i.menu_path.is_empty() && i.menu_path != "/")
+        .expect("no item with a menu found");
+    println!("testing menu for: {}", item.id);
+    let nodes = host
+        .get_menu(&item.id, None)
+        .await
+        .expect("get_menu failed");
+    println!("menu nodes: {nodes:#?}");
+    assert!(!nodes.is_empty(), "expected at least one menu item");
+}

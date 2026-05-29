@@ -1,10 +1,19 @@
+use std::io;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum CtlError {
-    #[error("IPC client is not implemented yet (see docs/IPC.md Phase 1)")]
-    IpcNotReady,
-    #[error("dmenu orchestration is not implemented yet (see docs/PLAN.md Phase 3)")]
-    DmenuNotReady,
+    #[error("cannot reach trayd daemon at {0}")]
+    DaemonUnreachable(String),
+    #[error("IPC error: {0}")]
+    Ipc(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid dmenu command (empty string): {0:?}")]
+    InvalidDmenuCmd(String),
+    #[error("failed to spawn dmenu process: {0}")]
+    DmenuSpawn(String),
 }
