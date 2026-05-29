@@ -4,7 +4,7 @@ use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast::error::RecvError;
 
-use libtrayd::{ItemId, TraydError, TrayHost};
+use libtrayd::{ItemId, TrayHost, TraydError};
 
 use crate::error::TraydBinError;
 use crate::ipc::codec;
@@ -97,7 +97,9 @@ async fn dispatch<W: AsyncWriteExt + Unpin>(write: &mut W, host: &TrayHost, cmd:
                 Ok(bytes) => {
                     let enc_len = base64_ng::STANDARD.encoded_len(bytes.len()).unwrap_or(0);
                     let mut buf = vec![0u8; enc_len];
-                    let n = base64_ng::STANDARD.encode_slice(&bytes, &mut buf).unwrap_or(0);
+                    let n = base64_ng::STANDARD
+                        .encode_slice(&bytes, &mut buf)
+                        .unwrap_or(0);
                     // SAFETY: base64 output is always ASCII
                     let data = String::from_utf8(buf[..n].to_vec()).unwrap_or_default();
                     IpcResponse::ok(OkPayload::Pixmap { app_id, size, data })

@@ -74,12 +74,18 @@ impl TrayHost {
     /// Returns `Err(TraydError::DBus(_))` if the session bus is unreachable or
     /// the watcher name is already taken by another process.
     pub async fn start() -> Result<Self, TraydError> {
-        let conn = zbus::Connection::session().await?;
+        // Internal channel: watcher D-Bus object → host background loop.
+        let (watcher_tx, watcher_rx) = mpsc::channel::<WatcherMsg>(32);
+        let watcher = StatusNotifierWatcher::new(watcher_tx);
 
-        // Claim the SNI watcher well-known name.  Fails with NameTaken if
-        // another trayd instance is already running.
-        conn.request_name(SNI_WATCHER_NAME).await?;
-        info!("claimed D-Bus name {SNI_WATCHER_NAME}");
+        // Register the object and claim the name atomically via Builder so no
+        // method calls arrive before the interface is ready.
+        let conn = zbus::connection::Builder::session()?
+            .serve_at(SNI_WATCHER_PATH, watcher)?
+            .name(SNI_WATCHER_NAME)?
+            .build()
+            .await?;
+        info!("claimed D-Bus name {SNI_WATCHER_NAME}; watcher at {SNI_WATCHER_PATH}");
 
         let (events_tx, _) = broadcast::channel(EVENTS_CAPACITY);
 
@@ -88,14 +94,6 @@ impl TrayHost {
             events_tx: events_tx.clone(),
             conn: conn.clone(),
         });
-
-        // Internal channel: watcher D-Bus object → host background loop.
-        let (watcher_tx, watcher_rx) = mpsc::channel::<WatcherMsg>(32);
-        let watcher = StatusNotifierWatcher::new(watcher_tx);
-
-        // Register the watcher D-Bus object.
-        conn.object_server().at(SNI_WATCHER_PATH, watcher).await?;
-        info!("StatusNotifierWatcher registered at {SNI_WATCHER_PATH}");
 
         let host = TrayHost {
             inner: Arc::clone(&inner),
