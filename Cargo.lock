@@ -129,6 +129,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64-ng"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "049e2c8ea737d22dc46f99cf801cb89a648d1e6d56279b19dace698b2c1e977d"
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1911,6 +1917,7 @@ dependencies = [
 name = "trayd"
 version = "0.1.0"
 dependencies = [
+ "base64-ng",
  "clap",
  "libtrayd",
  "serde",
