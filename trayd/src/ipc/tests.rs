@@ -75,8 +75,8 @@ async fn get_items_returns_list() {
 }
 
 #[tokio::test]
-#[ignore = "requires D-Bus session bus; GetMenu is Phase 3 (returns NotImplemented)"]
-async fn get_menu_returns_not_implemented() {
+#[ignore = "requires D-Bus session bus; returns NOT_FOUND when no real app is registered"]
+async fn get_menu_returns_not_found_for_unknown_app() {
     let path = temp_socket("menu");
     let handle = start_server(&path).await;
 
@@ -175,6 +175,43 @@ async fn codec_roundtrip_error_response() {
     assert!(json.contains("NOT_FOUND"));
     let decoded: IpcResponse = serde_json::from_str(&json).unwrap();
     assert!(matches!(decoded, IpcResponse::Err(_)));
+}
+
+#[tokio::test]
+async fn golden_get_menu_request_fixture() {
+    // top-level (submenu_id = null)
+    let req_line = r#"{"v":1,"cmd":"get_menu","app_id":"org.example.App","submenu_id":null}"#;
+    let req: IpcRequest = serde_json::from_str(req_line).unwrap();
+    assert!(
+        matches!(req.cmd, Cmd::GetMenu { ref app_id, submenu_id: None } if app_id == "org.example.App")
+    );
+
+    // submenu (submenu_id = 2)
+    let req_sub = r#"{"v":1,"cmd":"get_menu","app_id":"org.example.App","submenu_id":2}"#;
+    let req_sub: IpcRequest = serde_json::from_str(req_sub).unwrap();
+    assert!(
+        matches!(req_sub.cmd, Cmd::GetMenu { ref app_id, submenu_id: Some(2) } if app_id == "org.example.App")
+    );
+}
+
+#[tokio::test]
+async fn golden_menu_response_fixture() {
+    let resp_line = r#"{"v":1,"type":"menu","app_id":"org.example.App","items":[{"item_id":1,"label":"Action","is_submenu":false},{"item_id":2,"label":"Submenu","is_submenu":true}]}"#;
+    let resp: IpcResponse = serde_json::from_str(resp_line).unwrap();
+    match resp {
+        IpcResponse::Ok(ok) => match &ok.payload {
+            OkPayload::Menu { app_id, items } => {
+                assert_eq!(app_id, "org.example.App");
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].item_id, 1);
+                assert_eq!(items[0].label, "Action");
+                assert!(!items[0].is_submenu);
+                assert!(items[1].is_submenu);
+            }
+            other => panic!("expected Menu payload, got: {other:?}"),
+        },
+        IpcResponse::Err(e) => panic!("expected Ok, got error: {:?}", e.error),
+    }
 }
 
 #[tokio::test]

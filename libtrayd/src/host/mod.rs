@@ -19,10 +19,12 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tokio_stream::StreamExt as _;
 use tracing::{debug, error, info, warn};
 
+use zbus::zvariant::OwnedValue;
+
 use crate::{
     TraydError,
-    dbus::{StatusNotifierItemProxy, StatusNotifierWatcher, WatcherMsg},
-    model::{HostEvent, IconData, IconPixmap, ItemId, TrayItem, TrayStatus},
+    dbus::{DBusMenuProxy, StatusNotifierItemProxy, StatusNotifierWatcher, WatcherMsg},
+    model::{HostEvent, IconData, IconPixmap, ItemId, MenuNode, TrayItem, TrayStatus},
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -172,40 +174,101 @@ impl TrayHost {
     /// Activate a tray item.
     ///
     /// - `item_id == 0` → primary `StatusNotifierItem.Activate(0, 0)` (D-Bus method).
-    /// - `item_id > 0` → DBusMenu event (Phase 3; returns [`TraydError::NotImplemented`]).
+    /// - `item_id > 0` → `DBusMenu.Event(item_id, "clicked", …)` on the item's menu.
     ///
     /// # Errors
     ///
-    /// - [`TraydError::NotFound`] if the item is not in the cache.
-    /// - [`TraydError::NotImplemented`] for menu item ids (Phase 3+).
+    /// - [`TraydError::NotFound`] if the item is not in the cache or has no menu.
     /// - [`TraydError::ActivationFailed`] / [`TraydError::DBus`] on D-Bus error.
     pub async fn activate(&self, id: &ItemId, item_id: u32) -> Result<(), TraydError> {
-        if item_id > 0 {
-            return Err(TraydError::NotImplemented);
-        }
+        if item_id == 0 {
+            let (bus_name, object_path) = {
+                let state = self.inner.state.read().await;
+                let item = state
+                    .items
+                    .get(id)
+                    .ok_or_else(|| TraydError::NotFound(id.to_string()))?;
+                (item.bus_name.clone(), item.object_path.clone())
+            };
 
-        let (bus_name, object_path) = {
+            let proxy = build_proxy(&self.inner.conn, &bus_name, &object_path).await?;
+            proxy
+                .activate(0, 0)
+                .await
+                .map_err(|e| TraydError::ActivationFailed {
+                    app_id: id.to_string(),
+                    reason: e.to_string(),
+                })
+        } else {
+            let (bus_name, menu_path) = {
+                let state = self.inner.state.read().await;
+                let item = state
+                    .items
+                    .get(id)
+                    .ok_or_else(|| TraydError::NotFound(id.to_string()))?;
+                if item.menu_path.is_empty() || item.menu_path == "/" {
+                    return Err(TraydError::NotFound(format!("{id} has no menu")));
+                }
+                (item.bus_name.clone(), item.menu_path.clone())
+            };
+
+            let proxy = build_menu_proxy(&self.inner.conn, &bus_name, &menu_path).await?;
+            proxy
+                .event(
+                    item_id as i32,
+                    "clicked",
+                    zbus::zvariant::Value::from(0i32),
+                    0,
+                )
+                .await
+                .map_err(|e| TraydError::ActivationFailed {
+                    app_id: id.to_string(),
+                    reason: e.to_string(),
+                })
+        }
+    }
+
+    /// Fetch the direct children of a menu node for the given tray item.
+    ///
+    /// - `submenu_id = None` fetches the top-level menu (parent id `0`).
+    /// - `submenu_id = Some(n)` fetches children of the submenu with DBusMenu id `n`.
+    ///
+    /// Returns **direct children only** (one level deep via `GetLayout` depth=1).
+    ///
+    /// # Errors
+    ///
+    /// - [`TraydError::NotFound`] if the item is absent or has no associated menu.
+    /// - [`TraydError::DBus`] on transport failure.
+    pub async fn get_menu(
+        &self,
+        id: &ItemId,
+        submenu_id: Option<u32>,
+    ) -> Result<Vec<MenuNode>, TraydError> {
+        let (bus_name, menu_path) = {
             let state = self.inner.state.read().await;
             let item = state
                 .items
                 .get(id)
                 .ok_or_else(|| TraydError::NotFound(id.to_string()))?;
-            (item.bus_name.clone(), item.object_path.clone())
+            if item.menu_path.is_empty() || item.menu_path == "/" {
+                return Err(TraydError::NotFound(format!("{id} has no menu")));
+            }
+            (item.bus_name.clone(), item.menu_path.clone())
         };
 
-        let proxy = build_proxy(&self.inner.conn, &bus_name, &object_path).await?;
+        let proxy = build_menu_proxy(&self.inner.conn, &bus_name, &menu_path).await?;
+        let parent_id = submenu_id.map(|n| n as i32).unwrap_or(0);
 
-        proxy
-            .activate(0, 0)
+        let (_revision, (_root_id, _root_props, children)) = proxy
+            .get_layout(parent_id, 1, &[])
             .await
-            .map_err(|e| TraydError::ActivationFailed {
-                app_id: id.to_string(),
-                reason: e.to_string(),
-            })
+            .map_err(TraydError::DBus)?;
+
+        Ok(menu_nodes_from_av(children))
     }
 }
 
-// ─── Proxy helper ─────────────────────────────────────────────────────────────
+// ─── Proxy helpers ───────────────────────────────────────────────────────────
 
 async fn build_proxy<'c>(
     conn: &'c zbus::Connection,
@@ -218,6 +281,65 @@ async fn build_proxy<'c>(
         .build()
         .await
         .map_err(TraydError::DBus)
+}
+
+async fn build_menu_proxy<'c>(
+    conn: &'c zbus::Connection,
+    bus_name: &str,
+    menu_path: &str,
+) -> Result<DBusMenuProxy<'c>, TraydError> {
+    DBusMenuProxy::builder(conn)
+        .destination(bus_name.to_owned())?
+        .path(menu_path.to_owned())?
+        .build()
+        .await
+        .map_err(TraydError::DBus)
+}
+
+// ─── Menu layout parsing ──────────────────────────────────────────────────────
+
+/// Convert the `av` children array from a `GetLayout` response into [`MenuNode`]s.
+///
+/// Each `OwnedValue` in the array is a D-Bus variant containing
+/// `(i32 id, a{sv} properties, av children)`.
+pub(crate) fn menu_nodes_from_av(children: Vec<OwnedValue>) -> Vec<MenuNode> {
+    children.into_iter().filter_map(parse_child_ov).collect()
+}
+
+fn parse_child_ov(ov: OwnedValue) -> Option<MenuNode> {
+    // Deserialize the child structure (i32, a{sv}, av) via TryFrom.
+    let (id, props, nested_children): (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>) =
+        ov.try_into().ok()?;
+
+    let label = get_str_prop(&props, "label");
+    let enabled = get_bool_prop(&props, "enabled").unwrap_or(true);
+    let visible = get_bool_prop(&props, "visible").unwrap_or(true);
+    let icon_name = get_str_prop(&props, "icon-name");
+    // A submenu is indicated by `children-display` in props, or non-empty children
+    // (the latter occurs when GetLayout was called with depth > 1).
+    let is_submenu = props.contains_key("children-display") || !nested_children.is_empty();
+    let children = menu_nodes_from_av(nested_children);
+
+    Some(MenuNode {
+        id,
+        label,
+        enabled,
+        visible,
+        icon_name,
+        is_submenu,
+        children,
+    })
+}
+
+pub(crate) fn get_str_prop(props: &HashMap<String, OwnedValue>, key: &str) -> String {
+    props
+        .get(key)
+        .and_then(|v| String::try_from(v.clone()).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn get_bool_prop(props: &HashMap<String, OwnedValue>, key: &str) -> Option<bool> {
+    props.get(key).and_then(|v| bool::try_from(v.clone()).ok())
 }
 
 // ─── Background D-Bus loop ────────────────────────────────────────────────────
