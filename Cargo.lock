@@ -1890,12 +1890,14 @@ dependencies = [
 name = "tray-tui"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "crossterm",
  "ratatui",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1,8 +1,15 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum TuiError {
-    #[error("IPC client is not implemented yet (see docs/IPC.md Phase 1)")]
-    IpcNotReady,
+    #[error("I/O: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("config: {0}")]
+    Config(String),
+    #[error("cannot reach trayd daemon: {0}")]
+    DaemonUnreachable(String),
+    #[error("IPC error: {0}")]
+    Ipc(String),
 }
