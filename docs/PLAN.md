@@ -369,8 +369,8 @@ When a phase is marked complete:
 
 ### Phase 4 — **tray-tui**
 
-- [ ] Rename crate; ratatui tree over `subscribe` / `get_menu` / `activate`.
-- [ ] Example `tray-tui.toml`.
+- [x] Rename crate; ratatui tree over `subscribe` / `get_menu` / `activate`.
+- [x] Example `tray-tui.toml`.
 
 **Verify:** manual TUI session; unit tests for view model without terminal.
 
