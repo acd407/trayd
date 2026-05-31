@@ -380,8 +380,8 @@ When a phase is marked complete:
 
 ### Phase 6 — abar integration (trayd side)
 
-- [ ] Stable `subscribe` + `get_pixmap` for `icons` style.
-- [ ] README + abar §6 config examples.
+- [x] Stable `subscribe` + `get_pixmap` for `icons` style.
+- [x] README + abar §6 config examples.
 
 **Verify:** abar branch using IPC-only tray (post–PR #9 module patterns).
 

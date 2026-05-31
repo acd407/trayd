@@ -111,13 +111,13 @@ terminal — no external picker is spawned.
 
 **Keys:**
 
-| Key | Action |
-| --- | ------ |
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
+| Key               | Action                    |
+| ----------------- | ------------------------- |
+| `j` / `↓`         | Move down                 |
+| `k` / `↑`         | Move up                   |
 | `Enter` / `Space` | Open menu / activate item |
-| `Esc` | Go back one menu level |
-| `q` / `Ctrl-C` | Quit |
+| `Esc`             | Go back one menu level    |
+| `q` / `Ctrl-C`    | Quit                      |
 
 Config (optional) — copy `examples/tray-tui.toml` to
 `$XDG_CONFIG_HOME/tray-tui/config.toml`:
@@ -136,3 +136,13 @@ trayctl --socket /tmp/my.sock items
 trayctl --socket /tmp/my.sock menu --app-id org.example.App
 tray-tui --socket /tmp/my.sock
 ```
+
+---
+
+## Writing a client
+
+Any process can connect to the socket and speak the NDJSON protocol — bars, TUIs, scripts, or custom tools. No dependency on `libtrayd` is required; the wire types are small enough to duplicate locally. That said, `libtrayd` is a standalone library and can be embedded directly if you prefer that approach over a running daemon.
+
+See [`docs/IPC.md`](docs/IPC.md) for the complete wire format and golden request/response fixtures under `examples/ipc-examples/`.
+
+For a worked bar-integration example see [`examples/abar.md`](examples/abar.md).
