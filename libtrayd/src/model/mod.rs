@@ -124,8 +124,6 @@ impl IconData {
 // ─── MenuNode ────────────────────────────────────────────────────────────────
 
 /// One node in a DBusMenu tree (flattened snapshot; children fetched on demand).
-///
-/// Full tree traversal is implemented in Phase 3.
 #[derive(Debug, Clone)]
 pub struct MenuNode {
     /// DBusMenu item id.
@@ -140,7 +138,7 @@ pub struct MenuNode {
     pub icon_name: String,
     /// `true` when this node represents a submenu (children not yet fetched).
     pub is_submenu: bool,
-    /// Direct children (populated on demand in Phase 3).
+    /// Direct children (populated on demand).
     pub children: Vec<MenuNode>,
 }
 
