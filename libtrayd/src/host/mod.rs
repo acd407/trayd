@@ -312,6 +312,43 @@ impl TrayHost {
 
 // ─── Proxy helpers ───────────────────────────────────────────────────────────
 
+/// Given a unique D-Bus bus name (e.g. `:1.201`), return the first well-known
+/// name belonging to the same process (matched by Unix PID).
+///
+/// This handles apps like Telegram that register SNI on one connection while
+/// their well-known name (e.g. `org.telegram.desktop`) is claimed on another.
+///
+/// Returns `None` when the input is already a well-known name, no match is
+/// found, or any D-Bus call fails.
+async fn lookup_well_known_name(conn: &zbus::Connection, unique_name: &str) -> Option<String> {
+    if !unique_name.starts_with(':') {
+        return None; // Already a well-known name — nothing to look up.
+    }
+    let fdo = zbus::fdo::DBusProxy::new(conn).await.ok()?;
+    // Resolve the PID of the SNI connection.
+    let our_pid = fdo
+        .get_connection_unix_process_id(zbus::names::BusName::try_from(unique_name).ok()?)
+        .await
+        .ok()?;
+    let names = fdo.list_names().await.ok()?;
+    for owned_name in names {
+        let s = owned_name.to_string();
+        if s.starts_with(':') {
+            continue; // Skip unique names.
+        }
+        // Accept any well-known name whose owning connection shares our PID.
+        if let Ok(pid) = fdo
+            .get_connection_unix_process_id((*owned_name).clone())
+            .await
+        {
+            if pid == our_pid {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
 async fn build_proxy<'c>(
     conn: &'c zbus::Connection,
     bus_name: &'c str,
@@ -458,7 +495,15 @@ async fn handle_item_registered(
         }
     };
 
-    let item = fetch_item_properties(&proxy, &service_id, &bus_name, &object_path).await;
+    let well_known = lookup_well_known_name(conn, &bus_name).await;
+    let item = fetch_item_properties(
+        &proxy,
+        &service_id,
+        &bus_name,
+        &object_path,
+        well_known.as_deref(),
+    )
+    .await;
     let id = item.id.clone();
 
     inner.state.write().await.items.insert(id, item.clone());
@@ -518,10 +563,20 @@ async fn fetch_item_properties(
     service_id: &str,
     bus_name: &str,
     object_path: &str,
+    well_known_name: Option<&str>,
 ) -> TrayItem {
     let title = proxy.title().await.unwrap_or_default();
     let status = TrayStatus::from_dbus(&proxy.status().await.unwrap_or_default());
     let icon_name = proxy.icon_name().await.unwrap_or_default();
+    // Priority: explicit `IconName` → well-known bus name (e.g. `org.telegram.desktop`)
+    // → SNI `Id` as a last resort (e.g. `TelegramDesktop`).
+    let icon_name = if !icon_name.is_empty() {
+        icon_name
+    } else if let Some(wkn) = well_known_name.filter(|s| !s.is_empty()) {
+        wkn.to_owned()
+    } else {
+        proxy.id().await.unwrap_or_default()
+    };
     let raw_pixmaps = proxy.icon_pixmap().await.unwrap_or_default();
     let attention_icon_name = proxy.attention_icon_name().await.unwrap_or_default();
     let raw_attention_pixmaps = proxy.attention_icon_pixmap().await.unwrap_or_default();
@@ -622,7 +677,7 @@ async fn run_item_signal_watcher(
     loop {
         tokio::select! {
             Some(_) = new_icon.next() => {
-                on_icon_changed(&inner, &id, &proxy, false).await;
+                on_icon_changed(&inner, &id, &proxy, false, &bus_name).await;
             }
             Some(_) = new_title.next() => {
                 on_title_changed(&inner, &id, &proxy).await;
@@ -633,7 +688,7 @@ async fn run_item_signal_watcher(
                 }
             }
             Some(_) = new_attention.next() => {
-                on_icon_changed(&inner, &id, &proxy, true).await;
+                on_icon_changed(&inner, &id, &proxy, true, &bus_name).await;
             }
             else => break,
         }
@@ -648,11 +703,23 @@ async fn on_icon_changed(
     id: &ItemId,
     proxy: &StatusNotifierItemProxy<'_>,
     attention: bool,
+    bus_name: &str,
 ) {
     let icon_name = if attention {
         proxy.attention_icon_name().await.unwrap_or_default()
     } else {
-        proxy.icon_name().await.unwrap_or_default()
+        let name = proxy.icon_name().await.unwrap_or_default();
+        if name.is_empty() {
+            // Re-apply the same fallback used at registration time so that a
+            // `NewIcon` signal can't clobber the resolved well-known name.
+            if let Some(wkn) = lookup_well_known_name(&inner.conn, bus_name).await {
+                wkn
+            } else {
+                proxy.id().await.unwrap_or_default()
+            }
+        } else {
+            name
+        }
     };
     let raw = if attention {
         proxy.attention_icon_pixmap().await.unwrap_or_default()
