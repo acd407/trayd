@@ -70,6 +70,9 @@ struct TrayHostInner {
     /// the D-Bus-facing `RegisteredStatusNotifierItems` list and emit
     /// `StatusNotifierItemUnregistered` signals.
     watcher_items: Arc<Mutex<Vec<String>>>,
+    /// Shared host list so `handle_name_owner_changed` can clean
+    /// `RegisteredStatusNotifierHosts` and emit `StatusNotifierHostUnregistered`.
+    watcher_hosts: Arc<Mutex<Vec<String>>>,
 }
 
 // ─── TrayHost ─────────────────────────────────────────────────────────────────
@@ -96,8 +99,9 @@ impl TrayHost {
         let (watcher_tx, watcher_rx) = mpsc::channel::<WatcherMsg>(32);
         let watcher = StatusNotifierWatcher::new(watcher_tx);
 
-        // Clone the Arc BEFORE moving watcher into serve_at.
+        // Clone the Arcs BEFORE moving watcher into serve_at.
         let watcher_items = watcher.items.clone();
+        let watcher_hosts = watcher.hosts.clone();
 
         // Register the object and claim the name atomically via Builder so no
         // method calls arrive before the interface is ready.
@@ -115,6 +119,7 @@ impl TrayHost {
             events_tx: events_tx.clone(),
             conn: conn.clone(),
             watcher_items,
+            watcher_hosts,
         });
 
         let host = TrayHost {
@@ -565,22 +570,39 @@ async fn handle_name_owner_changed(inner: &Arc<TrayHostInner>, sig: zbus::fdo::N
         debug!(%id, %gone, "item removed from cache");
     }
 
+    // Keep track of whether we need to emit ItemUnregistered signals.
+    let need_item_signals = !ids_to_remove.is_empty();
+
     // Also clean the D-Bus-facing watcher item list so clients
     // querying the `RegisteredStatusNotifierItems` property (e.g.
     // tray-trigger) don't see stale entries, and emit
     // StatusNotifierItemUnregistered signals.
-    if !ids_to_remove.is_empty() {
+    if need_item_signals {
         let mut watcher_items = inner.watcher_items.lock().await;
         for id in &ids_to_remove {
             watcher_items.retain(|s| s != &id.0);
         }
+    }
 
+    // Check whether the gone bus name belongs to a registered host.
+    let host_gone = {
+        let mut watcher_hosts = inner.watcher_hosts.lock().await;
+        if watcher_hosts.contains(&gone) {
+            watcher_hosts.retain(|s| s != &gone);
+            true
+        } else {
+            false
+        }
+    };
+
+    // Emit D-Bus signals for item removals and/or host removal.
+    if need_item_signals || host_gone {
         let path = ObjectPath::from_static_str(SNI_WATCHER_PATH)
             .expect("SNI_WATCHER_PATH is a valid object path");
         let emitter = match SignalEmitter::new(&inner.conn, path) {
             Ok(e) => e,
             Err(e) => {
-                warn!(%e, "failed to create signal emitter, skipping StatusNotifierItemUnregistered");
+                warn!(%e, "failed to create signal emitter, skipping D-Bus signals");
                 return;
             }
         };
@@ -592,6 +614,16 @@ async fn handle_name_owner_changed(inner: &Arc<TrayHostInner>, sig: zbus::fdo::N
             .await
             {
                 warn!(%e, %id, "failed to emit StatusNotifierItemUnregistered");
+            }
+        }
+        if host_gone {
+            if let Err(e) = StatusNotifierWatcher::status_notifier_host_unregistered(
+                &emitter,
+                &gone,
+            )
+            .await
+            {
+                warn!(%e, %gone, "failed to emit StatusNotifierHostUnregistered");
             }
         }
     }

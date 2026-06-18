@@ -38,6 +38,9 @@ pub enum WatcherMsg {
 pub struct StatusNotifierWatcher {
     /// Shared item list also accessible from the host background loop.
     pub(crate) items: Arc<tokio::sync::Mutex<Vec<String>>>,
+    /// Shared host list so `handle_name_owner_changed` can clean and emit
+    /// `StatusNotifierHostUnregistered`.
+    pub(crate) hosts: Arc<tokio::sync::Mutex<Vec<String>>>,
     msg_tx: mpsc::Sender<WatcherMsg>,
 }
 
@@ -45,6 +48,7 @@ impl StatusNotifierWatcher {
     pub fn new(msg_tx: mpsc::Sender<WatcherMsg>) -> Self {
         Self {
             items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            hosts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             msg_tx,
         }
     }
@@ -98,13 +102,29 @@ impl StatusNotifierWatcher {
         Ok(())
     }
 
-    /// Called by SNI hosts to announce themselves.  We are always the host, so
-    /// this is a no-op other than emitting the confirmation signal.
+    /// Called by SNI hosts to announce themselves.
     async fn register_status_notifier_host(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-        _service: &str,
+        service: &str,
     ) -> zbus::fdo::Result<()> {
+        let host_id = if service.is_empty() {
+            hdr.sender()
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        } else {
+            service.to_owned()
+        };
+
+        if !host_id.is_empty() {
+            let mut hosts = self.hosts.lock().await;
+            if !hosts.contains(&host_id) {
+                hosts.push(host_id.clone());
+            }
+        }
+
+        debug!(%host_id, "SNI host registered");
         Self::status_notifier_host_registered(&emitter)
             .await
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
@@ -115,6 +135,12 @@ impl StatusNotifierWatcher {
     #[zbus(property)]
     async fn registered_status_notifier_items(&self) -> Vec<String> {
         self.items.lock().await.clone()
+    }
+
+    /// List of currently registered host service names.
+    #[zbus(property)]
+    async fn registered_status_notifier_hosts(&self) -> Vec<String> {
+        self.hosts.lock().await.clone()
     }
 
     /// Always `true` — we are the host.
@@ -145,6 +171,12 @@ impl StatusNotifierWatcher {
 
     #[zbus(signal)]
     async fn status_notifier_host_registered(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn status_notifier_host_unregistered(
+        emitter: &SignalEmitter<'_>,
+        service: &str,
+    ) -> zbus::Result<()>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
