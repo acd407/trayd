@@ -24,7 +24,7 @@ use zbus::zvariant::OwnedValue;
 use crate::{
     TraydError,
     dbus::{DBusMenuProxy, StatusNotifierItemProxy, StatusNotifierWatcher, WatcherMsg},
-    model::{HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, TrayItem, TrayStatus},
+    model::{HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, ToolTip, TrayItem, TrayStatus},
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -594,6 +594,9 @@ async fn fetch_item_properties(
         proxy.id().await.unwrap_or_default(),
     );
     let raw_pixmaps = proxy.icon_pixmap().await.unwrap_or_default();
+    let category = proxy.category().await.unwrap_or_default();
+    let item_is_menu = proxy.item_is_menu().await.unwrap_or(false);
+    let raw_tool_tip = proxy.tool_tip().await.unwrap_or_default();
     let attention_icon_name = proxy.attention_icon_name().await.unwrap_or_default();
     let raw_attention_pixmaps = proxy.attention_icon_pixmap().await.unwrap_or_default();
     let menu_path = proxy
@@ -601,6 +604,21 @@ async fn fetch_item_properties(
         .await
         .map(|p| p.to_string())
         .unwrap_or_default();
+
+    let tool_tip = ToolTip {
+        icon_name: raw_tool_tip.0,
+        icon_pixmaps: raw_tool_tip
+            .1
+            .into_iter()
+            .map(|(w, h, data)| IconPixmap {
+                width: w,
+                height: h,
+                data,
+            })
+            .collect(),
+        title: raw_tool_tip.2,
+        description: raw_tool_tip.3,
+    };
 
     let pixmaps = raw_pixmaps
         .into_iter()
@@ -617,6 +635,9 @@ async fn fetch_item_properties(
         object_path: object_path.to_owned(),
         title,
         status,
+        category,
+        item_is_menu,
+        tool_tip,
         icon: IconData {
             name: icon_name,
             pixmaps,
