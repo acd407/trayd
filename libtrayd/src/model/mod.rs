@@ -178,6 +178,8 @@ pub struct TrayItem {
     pub item_is_menu: bool,
     /// ToolTip data (icon name, pixmaps, title, description).
     pub tool_tip: ToolTip,
+    /// Overlay icon data (shown on top of the normal icon, e.g. a badge).
+    pub overlay_icon: IconData,
     /// Normal icon data.
     pub icon: IconData,
     /// Attention icon data — shown when `status == NeedsAttention`.
