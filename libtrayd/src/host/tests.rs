@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{IconData, ItemId, PixmapData, TrayItem, TrayStatus};
+use crate::model::{IconData, ItemId, PixmapData, ToolTip, TrayItem, TrayStatus};
 
 // ─── resolve_icon_name ────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,9 @@ fn dummy_item(id: &str) -> TrayItem {
         object_path: "/StatusNotifierItem".to_owned(),
         title: id.to_owned(),
         status: TrayStatus::Active,
+        category: String::new(),
+        item_is_menu: false,
+        tool_tip: ToolTip::default(),
         icon: IconData::default(),
         attention_icon: IconData::default(),
         menu_path: String::new(),
