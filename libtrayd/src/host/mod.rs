@@ -24,7 +24,10 @@ use zbus::zvariant::OwnedValue;
 use crate::{
     TraydError,
     dbus::{DBusMenuProxy, StatusNotifierItemProxy, StatusNotifierWatcher, WatcherMsg},
-    model::{HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, ToolTip, TrayItem, TrayStatus},
+    model::{
+        HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, ToolTip, TrayItem,
+        TrayStatus,
+    },
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -744,7 +747,15 @@ async fn run_item_signal_watcher(
         }
     };
 
-    tokio::pin!(new_icon, new_title, new_status, new_attention, new_overlay, new_menu, new_tool_tip);
+    tokio::pin!(
+        new_icon,
+        new_title,
+        new_status,
+        new_attention,
+        new_overlay,
+        new_menu,
+        new_tool_tip
+    );
     debug!(%id, "item signal watcher started");
 
     loop {
