@@ -24,7 +24,10 @@ use zbus::zvariant::OwnedValue;
 use crate::{
     TraydError,
     dbus::{DBusMenuProxy, StatusNotifierItemProxy, StatusNotifierWatcher, WatcherMsg},
-    model::{HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, ToolTip, TrayItem, TrayStatus},
+    model::{
+        HostEvent, IconData, IconPixmap, ItemId, MenuNode, PixmapData, ToolTip, TrayItem,
+        TrayStatus,
+    },
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -587,12 +590,10 @@ async fn fetch_item_properties(
         warn!(%e, %service_id, "failed to fetch title");
         String::new()
     });
-    let status = TrayStatus::from_dbus(
-        &proxy.status().await.unwrap_or_else(|e| {
-            warn!(%e, %service_id, "failed to fetch status");
-            String::new()
-        }),
-    );
+    let status = TrayStatus::from_dbus(&proxy.status().await.unwrap_or_else(|e| {
+        warn!(%e, %service_id, "failed to fetch status");
+        String::new()
+    }));
     let icon_name = proxy.icon_name().await.unwrap_or_else(|e| {
         warn!(%e, %service_id, "failed to fetch icon_name");
         String::new()
@@ -782,7 +783,15 @@ async fn run_item_signal_watcher(
         }
     };
 
-    tokio::pin!(new_icon, new_title, new_status, new_attention, new_overlay, new_menu, new_tool_tip);
+    tokio::pin!(
+        new_icon,
+        new_title,
+        new_status,
+        new_attention,
+        new_overlay,
+        new_menu,
+        new_tool_tip
+    );
     debug!(%id, "item signal watcher started");
 
     loop {
